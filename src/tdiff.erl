@@ -20,7 +20,8 @@
 %%%
 
 -module(tdiff).
--export([diff/2]).
+-export([diff/2,
+         diff/3]).
 
 
 %%---------------------------------------------------------------------
@@ -113,49 +114,60 @@
 %% programming languages.
 
 diff(Sx, Sy) ->
+    diff(Sx, Sy, fun erlang:'=='/2).
+
+diff(Sx, Sy, Cmp) ->
     SxLen = length(Sx),
     SyLen = length(Sy),
     DMax = SxLen + SyLen,
-    EditScript = case try_dpaths(0, DMax, [{0, 0, Sx, Sy, []}]) of
+    EditScript = case try_dpaths(0, DMax, [{0, 0, Sx, Sy, []}], Cmp) of
                      no            -> [{del,Sx},{ins,Sy}];
                      {ed,EditOpsR} -> edit_ops_to_edit_script(EditOpsR)
                  end,
     EditScript.
 
 
-try_dpaths(D, DMax, D1Paths) when D =< DMax ->
-    case try_kdiagonals(-D, D, D1Paths, []) of
+try_dpaths(D, DMax, D1Paths, Cmp) when D =< DMax ->
+    case try_kdiagonals(-D, D, D1Paths, [], Cmp) of
         {ed, E}          -> {ed, E};
-        {dpaths, DPaths} -> try_dpaths(D+1, DMax, DPaths)
+        {dpaths, DPaths} -> try_dpaths(D+1, DMax, DPaths, Cmp)
     end;
-try_dpaths(_, _DMax, _DPaths) ->
+try_dpaths(_, _DMax, _DPaths, _Cmp) ->
     no.
 
-try_kdiagonals(K, D, D1Paths, DPaths) when K =< D ->
+try_kdiagonals(K, D, D1Paths, DPaths, Cmp) when K =< D ->
     DPath = if D == 0 -> hd(D1Paths);
                true   -> pick_best_dpath(K, D, D1Paths)
             end,
-    case follow_snake(DPath) of
+    case follow_snake0(DPath, Cmp) of
         {ed, E} ->
             {ed, E};
         {dpath, DPath2} when K =/= -D ->
-            try_kdiagonals(K+2, D, tl(D1Paths), [DPath2 | DPaths]);
+            try_kdiagonals(K+2, D, tl(D1Paths), [DPath2 | DPaths], Cmp);
         {dpath, DPath2} when K =:= -D ->
-            try_kdiagonals(K+2, D, D1Paths, [DPath2 | DPaths])
+            try_kdiagonals(K+2, D, D1Paths, [DPath2 | DPaths], Cmp)
     end;
-try_kdiagonals(_, _D, _, DPaths) ->
+try_kdiagonals(_, _D, _, DPaths, _Cmp) ->
     {dpaths, lists:reverse(DPaths)}.
 
-follow_snake({X, Y,
-              [{Val, Ann }|Tx],
-              [{Val, Ann2}|Ty], Cs}) -> follow_snake({X+1,Y+1, Tx,Ty,
-                                                            [{e,{Val,[Ann,Ann2]}} | Cs]});
-follow_snake({_X,_Y,[],     [],     Cs}) -> {ed, Cs};
-follow_snake({X, Y, [],     Sy,     Cs}) -> {dpath, {X, Y, [],  Sy,  Cs}};
-follow_snake({X, Y, oob,    Sy,     Cs}) -> {dpath, {X, Y, oob, Sy,  Cs}};
-follow_snake({X, Y, Sx,     [],     Cs}) -> {dpath, {X, Y, Sx,  [],  Cs}};
-follow_snake({X, Y, Sx,     oob,    Cs}) -> {dpath, {X, Y, Sx,  oob, Cs}};
-follow_snake({X, Y, Sx,     Sy,     Cs}) -> {dpath, {X, Y, Sx,  Sy,  Cs}}.
+follow_snake0({X, Y,
+              [{Val1, Ann1}|Tx] = ATx,
+              [{Val2, Ann2}|Ty] = ATy, Cs}, Cmp) ->
+    case Cmp(Val1, Val2) of
+        true ->
+            follow_snake0({X+1,Y+1, Tx,Ty,
+                           [{e,{Val2,[Ann1,Ann2]}} | Cs]}, Cmp);
+        false ->
+            follow_snake_end({X, Y, ATx, ATy, Cs})
+    end;
+follow_snake0(All, _Cmp) -> follow_snake_end(All).
+
+follow_snake_end({_X,_Y,[],     [],     Cs}) -> {ed, Cs};
+follow_snake_end({X, Y, [],     Sy,     Cs}) -> {dpath, {X, Y, [],  Sy,  Cs}};
+follow_snake_end({X, Y, oob,    Sy,     Cs}) -> {dpath, {X, Y, oob, Sy,  Cs}};
+follow_snake_end({X, Y, Sx,     [],     Cs}) -> {dpath, {X, Y, Sx,  [],  Cs}};
+follow_snake_end({X, Y, Sx,     oob,    Cs}) -> {dpath, {X, Y, Sx,  oob, Cs}};
+follow_snake_end({X, Y, Sx,     Sy,     Cs}) -> {dpath, {X, Y, Sx,  Sy,  Cs}}.
 
 pick_best_dpath(K, D, DPs) -> pbd(K, D, DPs).
 
@@ -177,10 +189,10 @@ go_inc_x({X, Y, Sx, oob,    Cs}) -> {X+1, Y, Sx,  oob, Cs}.
 
 edit_ops_to_edit_script(EditOps) -> e2e(EditOps, _Acc=[]).
 
-e2e([{x,C}|T], [{ins,R}|Acc])        -> e2e(T, [{ins,[C|R]}|Acc]);
-e2e([{y,C}|T], [{del,R}|Acc])        -> e2e(T, [{del,[C|R]}|Acc]);
-e2e([{e,{V,Anns}}|T], [{eq,R}|Acc])  -> e2e(T, [{eq, [{V,Anns}|R]}|Acc]);
-e2e([{x,C}|T], Acc)                  -> e2e(T, [{ins,[C]}|Acc]);
-e2e([{y,C}|T], Acc)                  -> e2e(T, [{del,[C]}|Acc]);
-e2e([{e,{V,Anns}}|T], Acc)           -> e2e(T, [{eq, [{V,Anns}]}|Acc]);
-e2e([],        Acc)                  -> Acc.
+e2e([{x,C}|T], [{ins,R}|Acc]) -> e2e(T, [{ins,[C|R]}|Acc]);
+e2e([{y,C}|T], [{del,R}|Acc]) -> e2e(T, [{del,[C|R]}|Acc]);
+e2e([{e,X}|T], [{eq,R}|Acc])  -> e2e(T, [{eq, [X|R]}|Acc]);
+e2e([{x,C}|T], Acc)           -> e2e(T, [{ins,[C]}|Acc]);
+e2e([{y,C}|T], Acc)           -> e2e(T, [{del,[C]}|Acc]);
+e2e([{e,X}|T], Acc)           -> e2e(T, [{eq, [X]}|Acc]);
+e2e([],        Acc)           -> Acc.
