@@ -1,3 +1,14 @@
+#### Fork notes
+
+It's a diff-centric modification of tomas-abrahamsson's implementation
+of diff algorithm in Erlang with the following changes:
+* get rid of benchmarks
+* get rid of tracing stuff
+* add ability to diff annotated elements
+* add custom comparison function
+
+#### Original README
+
 #### What is it
 
 A (not very efficient) Erlang implementation of the
