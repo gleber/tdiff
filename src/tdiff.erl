@@ -21,7 +21,11 @@
 
 -module(tdiff).
 -export([diff/2,
-         diff/3]).
+         diff/3,
+         
+         both_diff/2,
+         both_diff/3
+        ]).
 
 
 %%---------------------------------------------------------------------
@@ -112,6 +116,19 @@
 %% the beginning of either Sx or Sy do do further comparisons. This is
 %% good, because this fits the way lists are built in functional
 %% programming languages.
+
+both_diff(Sx, Sy) ->
+    both_diff(Sx, Sy, fun erlang:'=='/2).
+
+both_diff(Sx, Sy, Cmp) ->
+    Forward  = diff(Sx                , Sy                , Cmp),
+    Backward = diff(lists:reverse(Sx) , lists:reverse(Sy) , Cmp),
+    case length(Forward) < length(Backward) of
+        true ->
+            Forward;
+        false ->
+            [ {Op, lists:reverse(L)} || {Op, L} <- lists:reverse(Backward) ]
+    end.
 
 diff(Sx, Sy) ->
     diff(Sx, Sy, fun erlang:'=='/2).
