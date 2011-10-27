@@ -22,20 +22,24 @@
 -module(tdiff).
 -export([diff/2,
          diff/3,
+         diff/4,
          
          both_diff/2,
-         both_diff/3
+         both_diff/3,
+         both_diff/4
         ]).
 
 
 %%---------------------------------------------------------------------
-%% diff(Sx, Sy)       -> Diff
-%% diff(Sx, Sy, Opts) -> Diff
+%% diff(Sx, Sy)      -> Diff
+%% diff(Sx, Sy, Cmp) -> Diff
+%% diff(Sx, Sy, Cmp, Cmb) -> Diff
 %%   Sx = Sy = [Elem]      %% typically a list of lines, characters or words
 %%     Elem = term()
-%%   Opts = []
+%%   Cmp = element comparsion function, erlang:'=='/2 if not specifed
+%%   Cmb = element combine function, erlang:min/2 if not specifed
 %%   Diff = [D]
-%%     D = {eq, [Elem]} |  %% [Elem] is equal in Sx and Sy
+%%     D = {eq, [Elem]} |  %% [Elem] is equal (in mean of Cmp function) in Sx and Sy; combined using Cmb function
 %%         {ins,[Elem]} |  %% [Elem] must be inserted into Sx to create Sy
 %%         {del,[Elem]}    %% [Elem] must be removed from Sx to create Sy
 %%---------------------------------------------------------------------
@@ -121,8 +125,11 @@ both_diff(Sx, Sy) ->
     both_diff(Sx, Sy, fun erlang:'=='/2).
 
 both_diff(Sx, Sy, Cmp) ->
-    Forward  = diff(Sx                , Sy                , Cmp),
-    Backward = diff(lists:reverse(Sx) , lists:reverse(Sy) , Cmp),
+    both_diff(Sx, Sy, Cmp, fun erlang:min/2).
+
+both_diff(Sx, Sy, Cmp, Cmb) ->
+    Forward  = diff(Sx                , Sy                , Cmp, Cmb),
+    Backward = diff(lists:reverse(Sx) , lists:reverse(Sy) , Cmp, Cmb),
     case length(Forward) < length(Backward) of
         true ->
             Forward;
@@ -134,50 +141,53 @@ diff(Sx, Sy) ->
     diff(Sx, Sy, fun erlang:'=='/2).
 
 diff(Sx, Sy, Cmp) ->
+    diff(Sx, Sy, Cmp, fun erlang:min/2).
+
+diff(Sx, Sy, Cmp, Cmb) ->
     SxLen = length(Sx),
     SyLen = length(Sy),
     DMax = SxLen + SyLen,
-    EditScript = case try_dpaths(0, DMax, [{0, 0, Sx, Sy, []}], Cmp) of
+    EditScript = case try_dpaths(0, DMax, [{0, 0, Sx, Sy, []}], Cmp, Cmb) of
                      no            -> [{del,Sx},{ins,Sy}];
                      {ed,EditOpsR} -> edit_ops_to_edit_script(EditOpsR)
                  end,
     EditScript.
 
 
-try_dpaths(D, DMax, D1Paths, Cmp) when D =< DMax ->
-    case try_kdiagonals(-D, D, D1Paths, [], Cmp) of
+try_dpaths(D, DMax, D1Paths, Cmp, Cmb) when D =< DMax ->
+    case try_kdiagonals(-D, D, D1Paths, [], Cmp, Cmb) of
         {ed, E}          -> {ed, E};
-        {dpaths, DPaths} -> try_dpaths(D+1, DMax, DPaths, Cmp)
+        {dpaths, DPaths} -> try_dpaths(D+1, DMax, DPaths, Cmp, Cmb)
     end;
-try_dpaths(_, _DMax, _DPaths, _Cmp) ->
+try_dpaths(_, _DMax, _DPaths, _Cmp, _Cmb) ->
     no.
 
-try_kdiagonals(K, D, D1Paths, DPaths, Cmp) when K =< D ->
+try_kdiagonals(K, D, D1Paths, DPaths, Cmp, Cmb) when K =< D ->
     DPath = if D == 0 -> hd(D1Paths);
                true   -> pick_best_dpath(K, D, D1Paths)
             end,
-    case follow_snake0(DPath, Cmp) of
+    case follow_snake0(DPath, Cmp, Cmb) of
         {ed, E} ->
             {ed, E};
         {dpath, DPath2} when K =/= -D ->
-            try_kdiagonals(K+2, D, tl(D1Paths), [DPath2 | DPaths], Cmp);
+            try_kdiagonals(K+2, D, tl(D1Paths), [DPath2 | DPaths], Cmp, Cmb);
         {dpath, DPath2} when K =:= -D ->
-            try_kdiagonals(K+2, D, D1Paths, [DPath2 | DPaths], Cmp)
+            try_kdiagonals(K+2, D, D1Paths, [DPath2 | DPaths], Cmp, Cmb)
     end;
-try_kdiagonals(_, _D, _, DPaths, _Cmp) ->
+try_kdiagonals(_, _D, _, DPaths, _Cmp, _Cmb) ->
     {dpaths, lists:reverse(DPaths)}.
 
 follow_snake0({X, Y,
-              [{Val1, Ann1}|Tx] = ATx,
-              [{Val2, Ann2}|Ty] = ATy, Cs}, Cmp) ->
+              [Val1|Tx] = ATx,
+              [Val2|Ty] = ATy, Cs}, Cmp, Cmb) ->
     case Cmp(Val1, Val2) of
         true ->
             follow_snake0({X+1,Y+1, Tx,Ty,
-                           [{e,{Val2,[Ann1,Ann2]}} | Cs]}, Cmp);
+                           [{e,Cmb(Val1, Val2)} | Cs]}, Cmp, Cmb);
         false ->
             follow_snake_end({X, Y, ATx, ATy, Cs})
     end;
-follow_snake0(All, _Cmp) -> follow_snake_end(All).
+follow_snake0(All, _Cmp, _Cmb) -> follow_snake_end(All).
 
 follow_snake_end({_X,_Y,[],     [],     Cs}) -> {ed, Cs};
 follow_snake_end({X, Y, [],     Sy,     Cs}) -> {dpath, {X, Y, [],  Sy,  Cs}};
